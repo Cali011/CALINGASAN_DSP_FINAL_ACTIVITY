@@ -98,8 +98,8 @@ elseif choice == 3
     classes = classes(~ismember({classes.name}, {'.', '..'}));  % Exclude '.' and '..'
     
     % Check if the number of folders is exactly 5
-    if numel(classes) ~= 26
-        disp('Error: The Testing folder must contain exactly 26 subfolders.');
+    if numel(classes) ~= 4
+        disp('Error: The Testing folder must contain exactly 4 subfolders.');
         return;
     end
 
@@ -133,7 +133,7 @@ elseif choice == 3
         predLabel = classify(net, img);
         
         % Display the image in the subplot
-        subplot(6, 5, i);  % Arrange in a single row with 5 columns
+        subplot(1, 5, i);  % Arrange in a single row with 5 columns
         imshow(img);
         title(['Predicted: ', char(predLabel), ' (', classes(i).name, ')']);
     end
