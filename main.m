@@ -1,143 +1,129 @@
 clc;
 clear;
 
-% Automatically get the current script's directory
+% === Setup paths ===
 currentFolder = fileparts(mfilename('fullpath'));
-
-% Construct the full dataset path based on the script's location
 datasetPath = fullfile(currentFolder, 'ASL_Dataset');
 modelFile = 'ASL_ABC_CNN.mat';
 
-% Check if the model file exists
+% === Preprocessing Function ===
+preprocessImage = @(img) imresize(rgb2gray(img), [128, 128]);
+
+% === Load or Train Model ===
 if isfile(modelFile)
-    disp('Loading the saved model...');
+    disp('✔️ Loading the saved model...');
     load(modelFile, 'net');
 else
-    % Step 1: Preprocess the data
-    disp('No saved model found. Starting training...');
+    disp('🚀 No saved model found. Starting training...');
     [trainData, testData, numClasses] = preprocessASL(datasetPath);
-
-    % Step 2: Train and save the model
     net = trainASLModel(trainData, testData, numClasses);
+    save(modelFile, 'net');
+    disp('✅ Model training complete and saved.');
 end
 
-% Step 3: Predict using saved image or webcam
-choice = input('Choose mode: 1 - Random Image from Testing, 2 - Webcam:  3 - Validation: ');
+% === Mode Selection ===
+choice = input(['\nChoose Mode:\n' ...
+                '1 - Random Image from Testing\n' ...
+                '2 - Webcam Snapshot\n' ...
+                '3 - Random from Each Class (Validation)\n' ...
+                '4 - Live Video Prediction\n' ...
+                'Your choice: ']);
 
+% === MODE 1: Random image from Testing ===
 if choice == 1
-    % Random image mode from the Testing folder
-    disp('Selecting a random image from the Testing folder...');
-    
-    % Get the path to the Testing folder
     testFolder = fullfile(datasetPath, 'Testing');
-    
-    % Get a list of all files in the Testing folder
-    classes = dir(testFolder); 
-    classes = classes([classes.isdir]);  % Filter out non-directory files
-    classes = classes(~ismember({classes.name}, {'.', '..'}));  % Exclude '.' and '..'
-    
-    % Randomly select a class folder
-    randClassIdx = randi(numel(classes));
-    randClassFolder = fullfile(testFolder, classes(randClassIdx).name);
-    
-    % Get all image files in the selected class folder
-    imgFiles = dir(fullfile(randClassFolder, '*.jpeg'));  % Change extension if needed
-    if isempty(imgFiles)
-        disp('No images found in the selected folder.');
-        return;
-    end
-    
-    % Randomly select an image file
-    randImgIdx = randi(numel(imgFiles));
-    imgPath = fullfile(randClassFolder, imgFiles(randImgIdx).name);
-    
-    % Predict the random image
-    predictASL(net, 'image', imgPath);
+    classFolders = getSubfolders(testFolder);
 
+    randClass = classFolders{randi(numel(classFolders))};
+    imgFiles = dir(fullfile(testFolder, randClass, '*.jpg'));
+
+    if isempty(imgFiles)
+        error('❌ No images found in folder: %s', randClass);
+    end
+
+    randImg = imgFiles(randi(numel(imgFiles)));
+    imgPath = fullfile(testFolder, randClass, randImg.name);
+    img = imread(imgPath);
+
+    imgProcessed = preprocessImage(img);
+    predLabel = classify(net, imgProcessed);
+
+    figure; imshow(imgProcessed);
+    title(['Prediction: ', char(predLabel), ' | Ground Truth: ', randClass]);
+
+% === MODE 2: Webcam Snapshot Prediction ===
 elseif choice == 2
-    % Webcam mode - capture an image using videoinput
-    disp('Capturing image from webcam...');
-    
-    % Initialize video input (webcam)
+    disp('📸 Capturing image from webcam...');
     vid = videoinput('winvideo', 1);
     set(vid, 'ReturnedColorSpace', 'RGB');
-    
-    % Preview the video
-    preview(vid);
-    pause(5); % Let the preview stabilize for 5 seconds
 
-    % Capture a snapshot
-    img1 = getsnapshot(vid);
-    
-    % Close preview window
-    closepreview(vid);
+    preview(vid); pause(3);  % Stabilize
+    img = getsnapshot(vid);
+    closepreview(vid); clear vid;
 
-    % Resize the captured image to 64x64
-    img1 = imresize(rgb2gray(img1), [128, 128]);
+    imgProcessed = preprocessImage(img);
+    predLabel = classify(net, imgProcessed);
 
-    % Predict using the captured image
-    predLabel = classify(net, img1);
+    figure; imshow(imgProcessed);
+    title(['Webcam Prediction: ', char(predLabel)]);
 
-    % Display the captured image and prediction result
-    imshow(img1);
-    title(['Prediction: ', char(predLabel)]);
-    
-    % Clear the webcam object
-    clear vid;
-
+% === MODE 3: Random Image from Each Class ===
 elseif choice == 3
-    % Random image mode from each folder in the Testing directory
-    disp('Selecting a random image from each folder in the Testing directory...');
-
-    % Get the path to the Testing folder
     testFolder = fullfile(datasetPath, 'Testing');
-    
-    % Get a list of all subfolders (directories only)
-    classes = dir(testFolder); 
-    classes = classes([classes.isdir]);  % Filter out non-directory files
-    classes = classes(~ismember({classes.name}, {'.', '..'}));  % Exclude '.' and '..'
-    
-    % Check if the number of folders is exactly 5
-    if numel(classes) ~= 4
-        disp('Error: The Testing folder must contain exactly 4 subfolders.');
-        return;
+    classFolders = getSubfolders(testFolder);
+
+    if numel(classFolders) ~= 4
+        error('❌ Expected exactly 4 class folders. Found %d.', numel(classFolders));
     end
 
-    % Create a single figure for displaying all images
-    figure('Name', 'Randomly Selected Images from Each Folder', 'NumberTitle', 'off');
+    figure('Name', 'Validation: One Random Image per Class');
 
-    % Loop through each folder and display the image
-    for i = 1:numel(classes)
-        % Get the path of the current class folder
-        classFolder = fullfile(testFolder, classes(i).name);
-
-        % Get all image files in the current class folder
-        imgFiles = dir(fullfile(classFolder, '*.jpeg'));  % Change extension if needed
-
-        % Check if any images were found in the current folder
+    for i = 1:4
+        folderPath = fullfile(testFolder, classFolders{i});
+        imgFiles = dir(fullfile(folderPath, '*.jpg'));
         if isempty(imgFiles)
-            disp(['No images found in folder: ', classes(i).name]);
+            warning('⚠️ No images found in %s', classFolders{i});
             continue;
         end
-        
-        % Randomly select an image file from the current folder
-        randImgIdx = randi(numel(imgFiles));
-        imgPath = fullfile(classFolder, imgFiles(randImgIdx).name);
-        
-        % Display the selected image path
-        disp(['Randomly selected image from folder ', classes(i).name, ': ', imgPath]);
 
-        % Predict the random image
+        randImg = imgFiles(randi(numel(imgFiles)));
+        imgPath = fullfile(folderPath, randImg.name);
         img = imread(imgPath);
-        img = imresize(rgb2gray(img), [128, 128]);  % Updated to 128x128
-        predLabel = classify(net, img);
-        
-        % Display the image in the subplot
-        subplot(1, 5, i);  % Arrange in a single row with 5 columns
-        imshow(img);
-        title(['Predicted: ', char(predLabel), ' (', classes(i).name, ')']);
+
+        imgProcessed = preprocessImage(img);
+        predLabel = classify(net, imgProcessed);
+
+        subplot(1, 4, i);
+        imshow(imgProcessed);
+        title({['Predicted: ', char(predLabel)], ['Actual: ', classFolders{i}]});
     end
- 
+
+% === MODE 4: Live Real-Time ASL Detection ===
+elseif choice == 4
+    disp('📹 Starting live ASL prediction. Close the figure to stop.');
+    vid = videoinput('winvideo', 1, 'YUY2_640x480');
+    set(vid, 'ReturnedColorSpace', 'RGB');
+    vid.FrameGrabInterval = 5;
+
+    figure('Name', 'Live ASL Prediction');
+
+    while ishandle(gcf)
+        frame = getsnapshot(vid);
+        imgProcessed = preprocessImage(frame);
+        predLabel = classify(net, imgProcessed);
+
+        imshow(frame);
+        title(['Live Prediction: ', char(predLabel)], 'FontSize', 16);
+        pause(0.1);
+    end
+    clear vid;
+
 else
-    disp('Invalid choice. Please select 1 for random image or 2 for webcam.');
+    disp('❌ Invalid choice. Please select 1, 2, 3 or 4.');
+end
+
+% === Helper Function to Get Folder Names ===
+function folders = getSubfolders(parentDir)
+    info = dir(parentDir);
+    folders = {info([info.isdir] & ~ismember({info.name}, {'.', '..'})).name};
 end
